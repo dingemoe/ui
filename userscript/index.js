@@ -199,70 +199,32 @@
 
   // ---- boot ---------------------------------------------------------------
 
-  (async function boot() {
-    await domReady();
 
-    if (window.__reactShadowTailwindBooted) return;
-    window.__reactShadowTailwindBooted = true;
+    (async function boot() {
+      await domReady();
 
-    // React
-    if (!window.React) await loadScript(REACT_SRC);
-    if (!window.ReactDOM) await loadScript(REACT_DOM_SRC);
+      if (window.__reactShadowTailwindBooted) return;
+      window.__reactShadowTailwindBooted = true;
 
-    const { host, shadow, mount } = createShadowHost();
-
-    // (Valgfritt) Twind
-    try {
-      if (!window.twind) await loadScript(TWIND_SRC);
-      if (!window.presetAutoprefix) await loadScript(TWIND_PRESET_AUTOPREFIX_SRC);
-      if (!window.presetTailwind) await loadScript(TWIND_PRESET_TAILWIND_SRC);
-      initTwind(shadow);
-    } catch (_) {}
-
-    const React = window.React;
-    const ReactDOM = window.ReactDOM;
-
-    const root = ReactDOM.createRoot(mount);
-    root.render(React.createElement(Shell(React)));
-
-    // Debug API
-    window.__shadowUmd = {
-      host, shadow, mount,
-      reload: async () => {
-        try {
-          const Remote = await loadRemoteUMD(REMOTE_COMPONENT_URL);
-          const element = (typeof Remote === 'function') ? React.createElement(Remote)
-                        : React.isValidElement(Remote) ? Remote
-                        : React.createElement('div', null, 'Invalid UMD component export');
-          root.render(React.createElement('div', { style: { width: '100%', height: '100%', background: 'black', color: 'white' } }, element));
-        } catch (e) {
-          err(e);
-          root.render(ErrorView(React, 'Failed to load remote component: ' + (e && e.message ? e.message : e)));
-        }
+      // Lag kun containeren, ingen React eller ekstern komponent
+      let host = document.getElementById(HOST_ID);
+      if (!host) {
+        host = document.createElement('div');
+        host.id = HOST_ID;
+        host.style.all = 'initial';
+        host.style.position = 'fixed';
+        host.style.zIndex = '2147483647';
+        host.style.bottom = '0';
+        host.style.right = '0';
+        host.style.width = '200px';
+        host.style.height = '200px';
+        host.style.background = 'black';
+        host.style.color = 'white';
+        host.style.borderRadius = '0.75rem';
+        host.style.overflow = 'hidden';
+        host.style.pointerEvents = 'auto';
+        host.style.boxShadow = '0 12px 30px rgba(0,0,0,.35)';
+        (document.body || document.documentElement).appendChild(host);
       }
-    };
-
-    try {
-      log('Fetching UMD from:', REMOTE_COMPONENT_URL);
-      const Remote = await loadRemoteUMD(REMOTE_COMPONENT_URL);
-      const element = (typeof Remote === 'function') ? React.createElement(Remote)
-                    : React.isValidElement(Remote) ? Remote
-                    : React.createElement('div', null, 'Invalid UMD component export');
-
-      root.render(
-        React.createElement('div', { style: { width: '100%', height: '100%', background: 'black', color: 'white' } }, element)
-      );
-      log('Rendered remote component.');
-    } catch (e) {
-      err(e);
-      root.render(ErrorView(React, 'Failed to load remote component: ' + (e && e.message ? e.message : e)));
-    }
-
-    // Toggle med Ctrl+Alt+X
-    document.addEventListener('keydown', (e) => {
-      if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'x') {
-        host.style.display = (host.style.display === 'none') ? 'block' : 'none';
-      }
-    });
-  })().catch(e => err('boot error:', e));
+    })().catch(e => err('boot error:', e));
 })();
