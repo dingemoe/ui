@@ -1,9 +1,8 @@
 // ==UserScript==
-// @name         React 18 + Tailwind (Shadow DOM, GitHub remote component)
+// @name         React 18 + Tailwind (Shadow DOM, GitHub UMD component) — robust
 // @namespace    daniel.userscripts
-// @version      1.1.0
-// @description  Safe, isolated Shadow DOM with React 18 and Tailwind-like styling via Twind, and bootstraps a component fetched from a public GitHub repo.
-// @author       you
+// @version      1.5.0
+// @description  Isolert Shadow DOM med React 18 og remote UMD-komponent. Root: fixed bottom-right 350x350, bg black, text white, rounded-xl. Ekstra logging/diagnostikk.
 // @match        *://*/*
 // @run-at       document-end
 // @grant        GM_addElement
@@ -13,39 +12,30 @@
 (function () {
   'use strict';
 
-  /**
-   * Why Twind instead of Tailwind Play CDN?
-   * - Tailwind's Play CDN injects global <style> into document, not into a ShadowRoot.
-   * - Twind is a small, Tailwind-compatible runtime that can target a specific ShadowRoot.
-   *   This keeps styles perfectly isolated while letting you use Tailwind utility classes.
-   */
-
-  /**
-   * CONFIG — tweak these
-   */
+  // React 18 (UMD)
   const REACT_SRC = 'https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js';
   const REACT_DOM_SRC = 'https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js';
 
-  // Best practical option for Tailwind-like utilities in a ShadowRoot:
+  // Tailwind-utilities i ShadowRoot via Twind (frivillig)
   const TWIND_SRC = 'https://cdn.jsdelivr.net/npm/twind@1.1.3/dist/twind.umd.min.js';
   const TWIND_PRESET_AUTOPREFIX_SRC = 'https://cdn.jsdelivr.net/npm/twind@1.1.3/dist/preset-autoprefix.umd.min.js';
   const TWIND_PRESET_TAILWIND_SRC = 'https://cdn.jsdelivr.net/npm/@twind/preset-tailwind@1.1.4/dist/preset-tailwind.umd.min.js';
 
-  // A public raw GitHub JS file that exports a React component.
-  // Supports two formats:
-  // 1) ESM: `export default function Component(props){...}`
-  // 2) UMD: sets `window.RemoteComponent = function Component(props){...}`
-  const REMOTE_COMPONENT_URL = 'https://raw.githubusercontent.com/uidotdev/react-gh-components/main/examples/HelloComponent.js';
+  // Din bygde komponent (UMD)
+  const REMOTE_COMPONENT_URL = 'https://raw.githubusercontent.com/dingemoe/ui/main/dist/hello-component.umd.js';
 
   const HOST_ID = 'react-tailwind-shadow-host-iso';
 
-  /** tiny helper to wait for DOM ready */
+  // ---- helpers -------------------------------------------------------------
+
+  const log = (...args) => console.log('[shadow-umd]', ...args);
+  const err = (...args) => console.error('[shadow-umd]', ...args);
+
   const domReady = () => new Promise((resolve) => {
     if (document.readyState === 'interactive' || document.readyState === 'complete') return resolve();
     document.addEventListener('DOMContentLoaded', () => resolve(), { once: true });
   });
 
-  /** Load external script with crossorigin via Tampermonkey's GM_addElement */
   function loadScript(src, attrs = {}) {
     return new Promise((resolve, reject) => {
       try {
@@ -53,43 +43,59 @@
           src,
           crossorigin: 'anonymous',
           async: false,
-          onload: resolve,
+          onload: () => { log('loaded', src); resolve(); },
           onerror: () => reject(new Error('Failed to load ' + src))
         }, attrs));
       } catch (e) { reject(e); }
     });
   }
 
-  /** Create the Shadow DOM host and root container */
+  // ---- UI host -------------------------------------------------------------
+
   function createShadowHost() {
+    // synlig “boot stripe” så du vet at scriptet kjører
+    const stripe = document.createElement('div');
+    stripe.textContent = 'BOOTED userscript';
+    stripe.style.cssText = 'position:fixed;bottom:360px;right:0;z-index:2147483647;background:#ef4444;color:#fff;font:12px/1.4 system-ui;padding:2px 6px;border-radius:6px 0 0 6px;box-shadow:0 2px 8px rgba(0,0,0,.3)';
+    document.documentElement.appendChild(stripe);
+    setTimeout(() => stripe.remove(), 1500);
+
     let host = document.getElementById(HOST_ID);
     if (!host) {
       host = document.createElement('div');
       host.id = HOST_ID;
-      // fixed container — adjust as needed
+
+      // Nøyaktig ønsket stil (og max z-index)
       host.style.all = 'initial';
       host.style.position = 'fixed';
       host.style.zIndex = '2147483647';
-      host.style.bottom = '16px';
-      host.style.right = '16px';
-      host.style.width = '420px';
-      host.style.maxWidth = 'min(92vw, 520px)';
-      host.style.maxHeight = '80vh';
-      host.style.pointerEvents = 'none';
+      host.style.bottom = '0';
+      host.style.right = '0';
+      host.style.width = '350px';
+      host.style.height = '350px';
+      host.style.background = 'black';
+      host.style.color = 'white';
+      host.style.borderRadius = '0.75rem'; // ~ rounded-xl
+      host.style.overflow = 'hidden';
+      host.style.pointerEvents = 'auto';
+      host.style.boxShadow = '0 12px 30px rgba(0,0,0,.35)';
+
       (document.body || document.documentElement).appendChild(host);
     }
+
     const shadow = host.shadowRoot || host.attachShadow({ mode: 'open' });
 
-    // React mount node
+    // React mount node fyller hele flaten
     let mount = shadow.getElementById('root');
     if (!mount) {
       mount = document.createElement('div');
       mount.id = 'root';
-      mount.style.pointerEvents = 'auto';
+      mount.style.width = '100%';
+      mount.style.height = '100%';
       shadow.appendChild(mount);
     }
 
-    // Local style for base layout only (not Tailwind — Twind will handle utilities)
+    // Lokal reset i shadow
     const style = document.createElement('style');
     style.textContent = `
       :host { all: initial; }
@@ -101,131 +107,162 @@
     return { host, shadow, mount };
   }
 
-  /** Initialize Twind inside the ShadowRoot */
   function initTwind(shadow) {
     const tw = window.twind;
     const presetAutoprefix = window.presetAutoprefix;
     const presetTailwind = window.presetTailwind;
-    if (!tw || !presetTailwind) throw new Error('Twind not loaded');
-    const twConfig = {
-      presets: [presetAutoprefix(), presetTailwind()],
-      // You can extend here if you need custom colors, etc.
-    };
-    // Attach to shadow
-    const twInstance = tw.install(twConfig, shadow);
-    return twInstance;
+    if (!tw || !presetTailwind) return null;
+    const twConfig = { presets: [presetAutoprefix(), presetTailwind()] };
+    return tw.install(twConfig, shadow);
   }
 
-  /** Load a remote component from GitHub (ESM preferred, UMD fallback) */
-  async function loadRemoteComponent(url) {
+  // ---- UMD loader (robust) ------------------------------------------------
+
+  async function fetchText(url) {
     const res = await fetch(url, { credentials: 'omit', cache: 'no-cache' });
-    if (!res.ok) throw new Error('Failed to fetch remote component: ' + res.status);
-    const code = await res.text();
-
-    // Try ESM dynamic import via blob
-    try {
-      const blob = new Blob([code], { type: 'text/javascript' });
-      const blobUrl = URL.createObjectURL(blob);
-      const mod = await import(blobUrl);
-      URL.revokeObjectURL(blobUrl);
-      if (mod && (typeof mod.default === 'function' || typeof mod.default === 'object')) return mod.default;
-    } catch (_) { /* fall through to UMD */ }
-
-    // Try UMD: expect global RemoteComponent after eval
-    try {
-      const fn = new Function(code + '
-;return (window.RemoteComponent||null);');
-      const cmp = fn.call(window);
-      if (cmp) return cmp;
-    } catch (e) { console.error('UMD eval failed', e); }
-
-    throw new Error('Could not resolve a component export from remote file. Expected ESM default export or window.RemoteComponent.');
+    if (!res.ok) throw new Error('HTTP ' + res.status + ' for ' + url);
+    return res.text();
   }
 
-  /** Default placeholder component while remote loads */
-  function makeShell(React, twx) {
-    return function Shell() {
+  function pickLikelyExport(beforeKeys, afterKeys) {
+    const newKeys = afterKeys.filter(k => !beforeKeys.includes(k));
+    // prøv å prioritere noen vanlige navn
+    const priority = ['RemoteComponent', 'default', 'App', 'HelloComponent', 'Component'];
+    for (const name of priority) if (afterKeys.includes(name)) return name;
+    // ellers ta første nye nøkkel som peker på en funksjon/objekt
+    for (const k of newKeys) {
+      try {
+        const v = window[k];
+        if (typeof v === 'function' || (v && typeof v === 'object')) return k;
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  async function loadRemoteUMD(url) {
+    const code = await fetchText(url);
+
+    const beforeKeys = Object.getOwnPropertyNames(window);
+    // Eval i globalt scope, med React injisert
+    const factory = new Function('window', 'document', 'React', `
+      try {
+        ${code}
+        return true;
+      } catch (e) {
+        console.error('UMD eval error:', e);
+        return false;
+      }
+    `);
+
+    const ok = factory(window, document, window.React);
+    if (!ok) throw new Error('Eval failure (see console)');
+
+    const afterKeys = Object.getOwnPropertyNames(window);
+    const pick = pickLikelyExport(beforeKeys, afterKeys);
+
+    const candidates = [
+      window.RemoteComponent,
+      window.default,
+      window.App,
+      window.HelloComponent,
+      window.Component,
+      pick ? window[pick] : null
+    ].filter(Boolean);
+
+    log('UMD candidates:', candidates.length, 'picked key:', pick);
+
+    const first = candidates[0] || null;
+    if (!first) throw new Error('UMD did not expose a usable component');
+
+    return first;
+  }
+
+  // ---- UI shells ----------------------------------------------------------
+
+  function Shell(React) {
+    return function () {
       return React.createElement(
         'div',
-        { className: twx('bg-gray-900 text-gray-100 rounded-2xl shadow-2xl p-4 max-h-[80vh] overflow-auto') },
-        React.createElement('div', { className: twx('flex items-center justify-between gap-2 mb-2') },
-          React.createElement('h1', { className: twx('text-sm font-semibold tracking-wide') }, 'Shadow React + Tailwind (Twind)')
-        ),
-        React.createElement('p', { className: twx('text-xs text-gray-300') }, 'Laster fjern komponent fra GitHub …')
+        { style: { width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: 'black', color: 'white' } },
+        React.createElement('div', { style: { fontSize: 12, opacity: 0.8 } }, 'Laster fjern komponent …')
       );
     };
   }
 
-  /** Boot */
+  function ErrorView(React, message) {
+    return React.createElement(
+      'div',
+      { style: { padding: 12, fontSize: 12, background: 'black', color: '#fca5a5', height: '100%', overflow: 'auto' } },
+      String(message)
+    );
+  }
+
+  // ---- boot ---------------------------------------------------------------
+
   (async function boot() {
     await domReady();
 
     if (window.__reactShadowTailwindBooted) return;
     window.__reactShadowTailwindBooted = true;
 
+    // React
     if (!window.React) await loadScript(REACT_SRC);
     if (!window.ReactDOM) await loadScript(REACT_DOM_SRC);
 
-    // Load Twind + presets
-    if (!window.twind) await loadScript(TWIND_SRC);
-    if (!window.presetAutoprefix) await loadScript(TWIND_PRESET_AUTOPREFIX_SRC);
-    if (!window.presetTailwind) await loadScript(TWIND_PRESET_TAILWIND_SRC);
-
     const { host, shadow, mount } = createShadowHost();
 
-    // Init Twind bound to this shadow root
-    const twInstance = initTwind(shadow);
-    const twx = (...args) => twInstance.tw(...args); // helper to use inside createElement
+    // (Valgfritt) Twind
+    try {
+      if (!window.twind) await loadScript(TWIND_SRC);
+      if (!window.presetAutoprefix) await loadScript(TWIND_PRESET_AUTOPREFIX_SRC);
+      if (!window.presetTailwind) await loadScript(TWIND_PRESET_TAILWIND_SRC);
+      initTwind(shadow);
+    } catch (_) {}
 
     const React = window.React;
     const ReactDOM = window.ReactDOM;
 
     const root = ReactDOM.createRoot(mount);
+    root.render(React.createElement(Shell(React)));
 
-    // Render shell immediately
-    const Shell = makeShell(React, twx);
-    root.render(React.createElement(Shell));
-
-    // Load remote component, then replace shell
-    try {
-      const Remote = await loadRemoteComponent(REMOTE_COMPONENT_URL);
-      // If the component is a default React component, just render it.
-      // If it exports a factory, call it with React and twx.
-      const element = (typeof Remote === 'function' && Remote.prototype && Remote.prototype.isReactComponent)
-        ? React.createElement(Remote)
-        : (typeof Remote === 'function')
-          ? React.createElement(Remote, { React, tw: twx })
-          : React.isValidElement(Remote)
-            ? Remote
-            : React.createElement('div', { className: twx('text-xs text-red-300') }, 'Ukjent export-type fra remote komponent.');
-
-      root.render(React.createElement('div', { className: twx('bg-gray-900 text-gray-100 rounded-2xl shadow-2xl p-4 max-h-[80vh] overflow-auto') },
-        React.createElement('div', { className: twx('flex items-center justify-between gap-2 mb-2') },
-          React.createElement('h1', { className: twx('text-sm font-semibold tracking-wide') }, 'Remote component')
-        ),
-        element
-      ));
-    } catch (e) {
-      console.error(e);
-      root.render(React.createElement('div', { className: twx('bg-gray-900 text-gray-100 rounded-2xl shadow-2xl p-4') },
-        React.createElement('div', { className: twx('text-red-300 text-xs') }, 'Klarte ikke å laste fjern komponent: ' + (e && e.message ? e.message : e))
-      ));
-    }
-
-    // Debug helpers
-    window.__reactShadowTailwind = {
-      host,
-      shadow,
-      tw: twInstance,
-      unmount() { try { root.unmount(); host.remove(); } catch (_) {} },
-      reload(url) { return loadRemoteComponent(url || REMOTE_COMPONENT_URL).then((C) => root.render(React.createElement(C))); }
+    // Debug API
+    window.__shadowUmd = {
+      host, shadow, mount,
+      reload: async () => {
+        try {
+          const Remote = await loadRemoteUMD(REMOTE_COMPONENT_URL);
+          const element = (typeof Remote === 'function') ? React.createElement(Remote)
+                        : React.isValidElement(Remote) ? Remote
+                        : React.createElement('div', null, 'Invalid UMD component export');
+          root.render(React.createElement('div', { style: { width: '100%', height: '100%', background: 'black', color: 'white' } }, element));
+        } catch (e) {
+          err(e);
+          root.render(ErrorView(React, 'Failed to load remote component: ' + (e && e.message ? e.message : e)));
+        }
+      }
     };
 
-    // Toggle hotkey
+    try {
+      log('Fetching UMD from:', REMOTE_COMPONENT_URL);
+      const Remote = await loadRemoteUMD(REMOTE_COMPONENT_URL);
+      const element = (typeof Remote === 'function') ? React.createElement(Remote)
+                    : React.isValidElement(Remote) ? Remote
+                    : React.createElement('div', null, 'Invalid UMD component export');
+
+      root.render(
+        React.createElement('div', { style: { width: '100%', height: '100%', background: 'black', color: 'white' } }, element)
+      );
+      log('Rendered remote component.');
+    } catch (e) {
+      err(e);
+      root.render(ErrorView(React, 'Failed to load remote component: ' + (e && e.message ? e.message : e)));
+    }
+
+    // Toggle med Ctrl+Alt+X
     document.addEventListener('keydown', (e) => {
       if (e.ctrlKey && e.altKey && e.key.toLowerCase() === 'x') {
         host.style.display = (host.style.display === 'none') ? 'block' : 'none';
       }
     });
-  })().catch(err => console.error('[userscript shadow-react+tailwind] boot error:', err));
+  })().catch(e => err('boot error:', e));
 })();
